@@ -85,10 +85,10 @@ The tag must match `package.json` exactly (`0.1.0` → `v0.1.0`). Tag pushes alw
 
 In **Actions → Release → Run workflow**:
 
-| `publish` | Behavior |
-| --- | --- |
+| `publish`         | Behavior                                                                                            |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
 | `false` (default) | **DRY RUN** — runs all quality gates and packaging; does **not** publish or create a GitHub Release |
-| `true` | **PUBLISH** — publishes to GitHub Packages and creates a GitHub Release |
+| `true`            | **PUBLISH** — publishes to GitHub Packages and creates a GitHub Release                             |
 
 Each run writes a **Release plan summary** to the job summary (`$GITHUB_STEP_SUMMARY`) showing mode, package, version, tag, and whether publish/release steps will run.
 
