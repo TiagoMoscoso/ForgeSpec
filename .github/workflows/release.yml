@@ -4,14 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+
   workflow_dispatch:
     inputs:
       publish:
         description: >-
-          false = validation only (no GitHub Package publish, no GitHub Release).
-          true = publish @tiagomoscoso/forgespec to GitHub Packages and create a GitHub Release.
+          Publish @tiagomoscoso/forgespec to GitHub Packages
+          and create a GitHub Release.
+          Uncheck only for a validation-only run.
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -24,22 +26,27 @@ permissions:
 env:
   PACKAGE_NAME: '@tiagomoscoso/forgespec'
   REGISTRY_URL: 'https://npm.pkg.github.com'
-  SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+  SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
 
 jobs:
   release:
+    name: Publish package and release
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node.js and GitHub Packages
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -72,126 +79,128 @@ jobs:
 
       - name: Resolve release version
         id: version
+        shell: bash
         run: |
           PKG="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+
           if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF_NAME}"
             EXPECTED="v${PKG}"
+
             if [ "$TAG" != "$EXPECTED" ]; then
-              echo "Tag $TAG does not match package.json version $EXPECTED"
+              echo "::error::Tag $TAG does not match package.json version $EXPECTED"
               exit 1
             fi
           else
             TAG="v${PKG}"
           fi
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$PKG" >> "$GITHUB_OUTPUT"
-          echo "Release target: $TAG (package.json $PKG)"
 
-      - name: Release plan summary
+      - name: Release summary
+        shell: bash
         run: |
           if [ "${{ env.SHOULD_PUBLISH }}" = "true" ]; then
             MODE="PUBLISH"
-            PUBLISH_LINE="**yes** — will publish to GitHub Packages"
-            RELEASE_LINE="**yes** — will create a GitHub Release"
           else
             MODE="DRY RUN"
-            PUBLISH_LINE="**no** — Package will NOT be published"
-            RELEASE_LINE="**no** — GitHub Release will NOT be created"
-          fi
-
-          TRIGGER="${{ github.event_name }}"
-          if [ "$TRIGGER" = "push" ]; then
-            TRIGGER_DETAIL="tag push (${GITHUB_REF_NAME})"
-          else
-            TRIGGER_DETAIL="manual workflow_dispatch (publish=${{ inputs.publish }})"
           fi
 
           {
-            echo "## ForgeSpec Release — ${MODE}"
+            echo "## ForgeSpec Release"
             echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Mode | **${MODE}** |"
-            echo "| Trigger | ${TRIGGER_DETAIL} |"
             echo "| Package | \`${{ env.PACKAGE_NAME }}\` |"
             echo "| Version | \`${{ steps.version.outputs.version }}\` |"
             echo "| Tag | \`${{ steps.version.outputs.tag }}\` |"
             echo "| Registry | \`${{ env.REGISTRY_URL }}\` |"
-            echo "| GitHub Package publish | ${PUBLISH_LINE} |"
-            echo "| GitHub Release create | ${RELEASE_LINE} |"
-            echo ""
-            if [ "$MODE" = "DRY RUN" ]; then
-              echo "> Validation-only run. Quality gates and packaging run, but **no publish** and **no GitHub Release**."
-              echo "> To publish manually, re-run this workflow with **publish = true**."
-            else
-              echo "> Publish run. Duplicate package versions and existing GitHub Releases fail the workflow."
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "=== ForgeSpec Release: ${MODE} ==="
-          echo "Package: ${{ env.PACKAGE_NAME }}@${{ steps.version.outputs.version }}"
-          echo "Tag: ${{ steps.version.outputs.tag }}"
-          echo "GitHub Package publish: ${PUBLISH_LINE}"
-          echo "GitHub Release create: ${RELEASE_LINE}"
-
-      - name: Pack release artifacts
+      - name: Pack release artifact
         run: |
           rm -f ./*.tgz SHA256SUMS
           pnpm pack
-          ls -1 ./*.tgz
           sha256sum ./*.tgz > SHA256SUMS
-          cat SHA256SUMS
 
-      - name: '[PUBLISH] Guard — package version not already on GitHub Packages'
+      - name: '[PUBLISH] Guard package version'
         if: env.SHOULD_PUBLISH == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if npm view "${{ env.PACKAGE_NAME }}@${VERSION}" version --registry=${{ env.REGISTRY_URL }} >/dev/null 2>&1; then
-            echo "::error::Package ${{ env.PACKAGE_NAME }}@${VERSION} already exists on GitHub Packages."
+
+          if npm view \
+            "${{ env.PACKAGE_NAME }}@${VERSION}" \
+            version \
+            --registry="${{ env.REGISTRY_URL }}" \
+            >/dev/null 2>&1
+          then
+            echo "::error::${{ env.PACKAGE_NAME }}@${VERSION} already exists."
+            echo "::error::Bump package.json before publishing another release."
             exit 1
           fi
-          echo "Package ${{ env.PACKAGE_NAME }}@${VERSION} is not yet published."
 
-      - name: '[PUBLISH] Guard — GitHub Release does not already exist'
+      - name: '[PUBLISH] Guard GitHub Release'
         if: env.SHOULD_PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::error::GitHub Release $TAG already exists."
             exit 1
           fi
-          echo "GitHub Release $TAG does not exist yet."
 
       - name: '[PUBLISH] Publish to GitHub Packages'
+        id: publish
         if: env.SHOULD_PUBLISH == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm publish --no-git-checks
 
       - name: '[PUBLISH] Create GitHub Release'
+        id: github_release
         if: env.SHOULD_PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          gh release create "$TAG" ./*.tgz SHA256SUMS --generate-notes --title "$TAG"
 
-      - name: Release result summary
+          gh release create "$TAG" \
+            ./*.tgz \
+            SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --title "$TAG"
+
+      - name: Final summary
         if: always()
+        shell: bash
         run: |
-          if [ "${{ env.SHOULD_PUBLISH }}" = "true" ]; then
-            RESULT="Published ${{ env.PACKAGE_NAME }}@${{ steps.version.outputs.version }} and created GitHub Release ${{ steps.version.outputs.tag }}."
-          else
-            RESULT="Validation-only run completed. Package will NOT be published. GitHub Release will NOT be created."
-          fi
           {
             echo ""
             echo "### Result"
-            echo "${RESULT}"
+
+            if [ "${{ env.SHOULD_PUBLISH }}" != "true" ]; then
+              echo "Validation-only run. Nothing was published."
+
+            elif [ "${{ steps.publish.outcome }}" = "success" ] && \
+                 [ "${{ steps.github_release.outcome }}" = "success" ]; then
+
+              echo "Published \`${{ env.PACKAGE_NAME }}@${{ steps.version.outputs.version }}\`."
+              echo ""
+              echo "Created GitHub Release \`${{ steps.version.outputs.tag }}\`."
+
+            else
+              echo "Publish mode was enabled, but release did not complete."
+              echo "Inspect the failed step above."
+            fi
+
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "${RESULT}"
