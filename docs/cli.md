@@ -20,7 +20,12 @@ Global flags:
 - `forgespec ready [--change <id>] [--close]`
 - `forgespec context <task> [--change <id>]`
 - `forgespec evidence <task> [--change <id>]`
-- `forgespec skill [name]`
+- `forgespec skill [name]` — with a name, returns `{id, title, description, checklist, configured}` for that specialist
+- `forgespec agent preflight <task>`
+- `forgespec agent context <task>`
+- `forgespec tool list`
+- `forgespec tool inspect <tool>`
+- `forgespec tool run <tool> [--task] [--dry-run] [--confirm] [--set name=value]`
 
 ## Lifecycle
 
@@ -49,3 +54,4 @@ Global flags:
 - `FGE7xx` archive / close
 - `FGE8xx` path / command safety
 - `FGE9xx` lifecycle actions
+- `FGE11xx` Agent Tools

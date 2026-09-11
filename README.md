@@ -41,7 +41,7 @@ Want an agent to drive setup? Paste [docs/install.md](docs/install.md).
 explore (optional) → propose → forge → exec <one task> → archive <task> → close
 ```
 
-Agent skills (`/forge-explore`, `/forge:propose`, `$forgespec-exec`, …) orchestrate. The CLI owns every state transition, validator run, evidence record, and archive/close.
+Agent skills (`/forge-explore`, `/forge:propose`, `$forgespec-exec`, …) carry the reasoning — architecture tradeoffs, requirement quality, task decomposition, delivery review — and select specialist checklists (architecture, security, data, migration, …) as each change actually calls for. The CLI owns every state transition, validator run, evidence record, and archive/close. See [docs/skills.md](docs/skills.md).
 
 Canonical artifacts per change:
 
@@ -50,7 +50,11 @@ Canonical artifacts per change:
 
 Task state is machine-owned under `runtime/`. Markdown checkboxes are not evidence.
 
+Agent Tools (`forgespec tool run`, `forgespec agent preflight/context`) are controlled capabilities, not a shell escape hatch. See [docs/agent-tools.md](docs/agent-tools.md).
+
 ## Development
+
+Requires Node.js 22+ and the pinned package manager (`pnpm@10.15.0` from `package.json`).
 
 ```bash
 pnpm install
@@ -59,7 +63,7 @@ pnpm build
 node bin/forgespec.js --help
 ```
 
-Requires Node.js 22+.
+Whenever you change dependencies in `package.json`, run `pnpm install` and commit the updated `pnpm-lock.yaml` in the same change. CI installs with `pnpm install --frozen-lockfile` and will fail if the lockfile is out of date.
 
 ## License
 

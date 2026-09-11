@@ -21,11 +21,14 @@ import {
   queryValidate,
   reviewSubmit,
 } from '../application/commands.js';
+import { agentContext, agentPreflight } from '../application/agent.js';
+import { listTools } from '../application/tools/registry.js';
+import { runTool } from '../application/tools/run.js';
+import { loadProjectConfig, loadResolvedConfig } from '../infrastructure/config/load.js';
 import { initProject, parseTools, updateSkills, TOOL_IDS } from '../application/init.js';
 import { workspaceCheck, workspaceSetup } from '../application/workspace.js';
 import { getSpecialist, SPECIALISTS } from '../skills/specialists/index.js';
 import { resolveChangeId } from '../infrastructure/runtime/store.js';
-import { loadResolvedConfig } from '../infrastructure/config/load.js';
 
 async function withJson<T>(json: boolean, fn: () => Promise<T>): Promise<void> {
   try {
@@ -324,6 +327,122 @@ export async function runCli(argv = process.argv): Promise<void> {
         const root = await findProjectRoot(process.cwd()).catch(() => undefined);
         const configured = root ? (await loadResolvedConfig(root)).workflow.propose.skills : [];
         return { ...specialist, configured };
+      });
+    });
+
+  const tool = program.command('tool').description('Controlled Agent Tools');
+  tool
+    .command('list')
+    .description('List built-in and project-registered tools')
+    .action(async (_opts: unknown, cmd: Command) => {
+      await withJson(jsonFlag(cmd), async () => {
+        const root = await findProjectRoot(process.cwd());
+        const config = await loadProjectConfig(root);
+        return {
+          tools: listTools(config).map((item) => ({
+            id: item.id,
+            origin: item.origin,
+            risk: item.risk,
+            phases: item.phases,
+            description: item.description,
+          })),
+        };
+      });
+    });
+  tool
+    .command('inspect')
+    .argument('<tool>', 'Tool id')
+    .description('Show a tool definition (no secrets)')
+    .action(async (name: string, _opts: unknown, cmd: Command) => {
+      await withJson(jsonFlag(cmd), async () => {
+        const root = await findProjectRoot(process.cwd());
+        const config = await loadProjectConfig(root);
+        const item = listTools(config).find((entry) => entry.id === name);
+        if (!item) {
+          throw new ForgeError(Codes.TOOL_UNKNOWN, `Unknown tool '${name}'.`);
+        }
+        return {
+          ...item,
+          env: item.env.map((key) => key),
+        };
+      });
+    });
+  tool
+    .command('run')
+    .argument('<tool>', 'Tool id')
+    .description('Run a registered tool via argv (never a shell string)')
+    .option('--task <id>', 'Task id')
+    .option('--change <id>', 'Change id')
+    .option('--phase <phase>', 'Lifecycle phase')
+    .option(
+      '--set <name=value>',
+      'Typed parameter (repeatable)',
+      (value: string, prev: string[]) => {
+        prev.push(value);
+        return prev;
+      },
+      [] as string[],
+    )
+    .option('--dry-run', 'Print the resolved plan without executing', false)
+    .option('--confirm', 'Confirm a destructive/write tool that requires it', false)
+    .action(
+      async (
+        name: string,
+        opts: {
+          task?: string;
+          change?: string;
+          phase?: string;
+          set?: string[];
+          dryRun?: boolean;
+          confirm?: boolean;
+        },
+        cmd: Command,
+      ) => {
+        await withJson(jsonFlag(cmd), async () => {
+          const root = await findProjectRoot(process.cwd());
+          const phase = opts.phase as
+            'explore' | 'propose' | 'forge' | 'exec' | 'archive' | undefined;
+          if (phase && !['explore', 'propose', 'forge', 'exec', 'archive'].includes(phase)) {
+            throw new ForgeError(Codes.TOOL_PHASE, `Unknown phase '${opts.phase}'.`);
+          }
+          return runTool({
+            root,
+            cwd: process.cwd(),
+            toolId: name,
+            taskId: opts.task,
+            changeId: opts.change,
+            phase,
+            set: opts.set,
+            dryRun: Boolean(opts.dryRun),
+            confirm: Boolean(opts.confirm),
+          });
+        });
+      },
+    );
+
+  const agent = program.command('agent').description('Token-efficient agent helpers');
+  agent
+    .command('preflight')
+    .argument('<task>', 'Task id')
+    .description('Check whether a task can start without taking the lock')
+    .option('--change <id>', 'Change id')
+    .action(async (taskId: string, opts: { change?: string }, cmd: Command) => {
+      await withJson(jsonFlag(cmd), async () => {
+        const root = await findProjectRoot(process.cwd());
+        const changeId = await resolveChangeId(root, opts.change);
+        return agentPreflight(root, process.cwd(), changeId, taskId);
+      });
+    });
+  agent
+    .command('context')
+    .argument('<task>', 'Task id')
+    .description('Minimum sufficient context plus available tools')
+    .option('--change <id>', 'Change id')
+    .action(async (taskId: string, opts: { change?: string }, cmd: Command) => {
+      await withJson(jsonFlag(cmd), async () => {
+        const root = await findProjectRoot(process.cwd());
+        const changeId = await resolveChangeId(root, opts.change);
+        return agentContext(root, changeId, taskId);
       });
     });
 

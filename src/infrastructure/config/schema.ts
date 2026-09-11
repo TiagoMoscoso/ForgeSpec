@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Codes } from '../../domain/validation/codes.js';
 import { ForgeError } from '../../domain/validation/error.js';
+import { TOOL_ID_PATTERN } from '../../domain/tools/types.js';
 
 export const SpecialistName = z.enum([
   'architecture',
@@ -40,6 +41,119 @@ export const ValidatorCommandSchema = z
     timeout_ms: z.number().int().positive().optional(),
   })
   .strict();
+
+export const ToolPhaseSchema = z.enum(['explore', 'propose', 'forge', 'exec', 'archive']);
+export const ToolRiskSchema = z.enum(['read', 'write', 'destructive']);
+export const ToolParamTypeSchema = z.enum([
+  'string',
+  'integer',
+  'boolean',
+  'enum',
+  'path',
+  'task-id',
+]);
+export const ToolParamSourceSchema = z.enum([
+  'cli',
+  'task.id',
+  'task.title',
+  'task.kind',
+  'task.touches',
+  'change.id',
+]);
+
+export const ToolParameterSchema = z
+  .object({
+    type: ToolParamTypeSchema,
+    required: z.boolean().default(false),
+    default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    enum: z.array(z.string()).min(1).optional(),
+    source: ToolParamSourceSchema.default('cli'),
+  })
+  .strict();
+
+export const ToolDefinitionSchema = z
+  .object({
+    executable: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    cwd: z.string().optional(),
+    phases: z.array(ToolPhaseSchema).min(1).default(['exec']),
+    timeout: z
+      .string()
+      .regex(/^\d+s$/, 'timeout must look like 120s')
+      .optional(),
+    timeout_ms: z.number().int().positive().optional(),
+    risk: ToolRiskSchema.default('read'),
+    confirm: z.boolean().optional(),
+    resources: z.array(z.string()).default([]),
+    parameters: z.record(z.string(), ToolParameterSchema).default({}),
+    env: z.array(z.string()).default([]),
+    evidence: z
+      .object({
+        type: z.enum(['test', 'command', 'none']).default('command'),
+      })
+      .strict()
+      .optional(),
+    description: z.string().optional(),
+  })
+  .strict();
+
+export const WorkflowHookSchema = z
+  .object({
+    tool: z.string().min(1),
+  })
+  .strict();
+
+export const ObservabilitySchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    service: z
+      .object({
+        name: z.string().min(1).default('forgespec'),
+      })
+      .strict()
+      .default({ name: 'forgespec' }),
+    otlp: z
+      .object({
+        endpoint: z.string().default(''),
+      })
+      .strict()
+      .default({ endpoint: '' }),
+    metrics: z
+      .object({
+        enabled: z.boolean().default(true),
+      })
+      .strict()
+      .default({ enabled: true }),
+    tracing: z
+      .object({
+        enabled: z.boolean().default(true),
+      })
+      .strict()
+      .default({ enabled: true }),
+    logs: z
+      .object({
+        enabled: z.boolean().default(true),
+      })
+      .strict()
+      .default({ enabled: true }),
+    privacy: z
+      .object({
+        include_paths: z.boolean().default(false),
+        include_command_args: z.boolean().default(false),
+      })
+      .strict()
+      .default({ include_paths: false, include_command_args: false }),
+  })
+  .strict()
+  .default({
+    enabled: false,
+    service: { name: 'forgespec' },
+    otlp: { endpoint: '' },
+    metrics: { enabled: true },
+    tracing: { enabled: true },
+    logs: { enabled: true },
+    privacy: { include_paths: false, include_command_args: false },
+  });
 
 export const ConfigSchema = z
   .object({
@@ -124,6 +238,8 @@ export const ConfigSchema = z
               .int()
               .positive()
               .default(2 * 60 * 60 * 1000),
+            before: z.array(WorkflowHookSchema).default([]),
+            after: z.array(WorkflowHookSchema).default([]),
           })
           .strict()
           .default({
@@ -131,6 +247,8 @@ export const ConfigSchema = z
             tests: { creation: 'required', focused_execution: 'required' },
             validators: ['build', 'focused-tests'],
             lock_ttl_ms: 2 * 60 * 60 * 1000,
+            before: [],
+            after: [],
           }),
         archive: z
           .object({
@@ -145,12 +263,16 @@ export const ConfigSchema = z
               .strict()
               .default({ affected_execution: 'required', full_suite: 'optional' }),
             action: ActionSchema.default({ type: 'none' }),
+            before: z.array(WorkflowHookSchema).default([]),
+            after: z.array(WorkflowHookSchema).default([]),
           })
           .strict()
           .default({
             validators: ['affected-tests', 'spec-compliance', 'code-review'],
             tests: { affected_execution: 'required', full_suite: 'optional' },
             action: { type: 'none' },
+            before: [],
+            after: [],
           }),
       })
       .strict()
@@ -173,11 +295,15 @@ export const ConfigSchema = z
           tests: { creation: 'required', focused_execution: 'required' },
           validators: ['build', 'focused-tests'],
           lock_ttl_ms: 2 * 60 * 60 * 1000,
+          before: [],
+          after: [],
         },
         archive: {
           validators: ['affected-tests', 'spec-compliance', 'code-review'],
           tests: { affected_execution: 'required', full_suite: 'optional' },
           action: { type: 'none' },
+          before: [],
+          after: [],
         },
       }),
     git: z
@@ -187,6 +313,8 @@ export const ConfigSchema = z
       })
       .strict()
       .default({ isolation: 'none', branch_pattern: 'forgespec/<change-id>' }),
+    tools: z.record(z.string(), ToolDefinitionSchema).default({}),
+    observability: ObservabilitySchema,
   })
   .strict();
 
@@ -202,6 +330,10 @@ export const CHANGE_OVERLAY_ALLOWLIST = new Set([
   'workflow.archive.validators',
   'workflow.archive.tests',
   'workflow.archive.action',
+  'workflow.archive.before',
+  'workflow.archive.after',
+  'workflow.exec.before',
+  'workflow.exec.after',
   'workflow.forge.policy',
   'project.validator_commands',
   'project.test_globs',
@@ -244,6 +376,31 @@ export function parseConfigDocument(value: unknown, source: string): ForgeConfig
         })),
       },
     );
+  }
+  for (const [id, tool] of Object.entries(result.data.tools)) {
+    if (!TOOL_ID_PATTERN.test(id)) {
+      throw new ForgeError(
+        Codes.CONFIG_INVALID,
+        `Invalid tool id '${id}' in ${source}.`,
+        'Tool ids must be lowercase kebab-case (a-z, digits, hyphen).',
+      );
+    }
+    assertNoShellArgv(tool.args, `tools.${id}.args`);
+    if (/\s/.test(tool.executable) || /[;&|`$<>]/.test(tool.executable)) {
+      throw new ForgeError(
+        Codes.COMMAND_SHELL,
+        `Tool '${id}' executable must be a single argv[0], not a shell string.`,
+        'Use executable plus args: []. Never pass shell metacharacters in executable.',
+      );
+    }
+    for (const [paramName, spec] of Object.entries(tool.parameters)) {
+      if (spec.type === 'enum' && (!spec.enum || spec.enum.length === 0)) {
+        throw new ForgeError(
+          Codes.CONFIG_INVALID,
+          `Tool '${id}' parameter '${paramName}' has type enum but no values.`,
+        );
+      }
+    }
   }
   return result.data;
 }

@@ -26,6 +26,19 @@ export interface SemanticReview {
   source: string;
 }
 
+export interface ToolExecutionRecord {
+  tool: string;
+  source: { type: 'tool'; id: string };
+  execution: {
+    status: 'passed' | 'failed' | 'timeout' | 'cancelled';
+    exit_code: number;
+    duration_ms: number;
+  };
+  validation?: { type: 'test' | 'command' | 'none' };
+  summary: string;
+  at: string;
+}
+
 export interface EvidenceRecord {
   attempt_id: string;
   task_id: string;
@@ -43,6 +56,7 @@ export interface EvidenceRecord {
   };
   filesAtStart: string[];
   filesAtFinish: string[];
+  tools?: ToolExecutionRecord[];
 }
 
 export function isEvidenceFresh(

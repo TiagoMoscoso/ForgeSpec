@@ -97,6 +97,26 @@ describe('additional coverage', () => {
       expect(named).toContain('Testing');
       const status = await captureStdout(() => runCli(['node', 'forgespec', '--json', 'validate']));
       expect(status).toContain('configVersion');
+      const tools = await captureStdout(() =>
+        runCli(['node', 'forgespec', '--json', 'tool', 'list']),
+      );
+      expect(tools).toContain('task-preflight');
+      const inspected = await captureStdout(() =>
+        runCli(['node', 'forgespec', '--json', 'tool', 'inspect', 'repository-inspection']),
+      );
+      expect(inspected).toContain('repository-inspection');
+      const dry = await captureStdout(() =>
+        runCli([
+          'node',
+          'forgespec',
+          '--json',
+          'tool',
+          'run',
+          'repository-inspection',
+          '--dry-run',
+        ]),
+      );
+      expect(dry).toContain('dryRun');
     });
   });
 
@@ -118,6 +138,33 @@ describe('additional coverage', () => {
     const ctx = await queryContext(root, 'add-token-validator', 'T01');
     expect(ctx.task.id).toBe('T01');
     await queryValidate(root, 'add-token-validator');
+    await withCwd(root, async () => {
+      const listed = await captureStdout(() =>
+        runCli([
+          'node',
+          'forgespec',
+          '--json',
+          'agent',
+          'preflight',
+          'T01',
+          '--change',
+          'add-token-validator',
+        ]),
+      );
+      expect(listed).toContain('T01');
+      await captureStdout(() =>
+        runCli([
+          'node',
+          'forgespec',
+          '--json',
+          'agent',
+          'context',
+          'T01',
+          '--change',
+          'add-token-validator',
+        ]),
+      );
+    });
     await execStart(root, root, 'add-token-validator', 'T01');
     await execReset(root, 'add-token-validator', 'T01', 'agent crashed mid-task');
     const rec = await runDeterministicValidator('requirement-coverage', {

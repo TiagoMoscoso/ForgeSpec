@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: forgespec
+    folder: ForgeSpec
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
