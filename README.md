@@ -50,7 +50,11 @@ Canonical artifacts per change:
 
 Task state is machine-owned under `runtime/`. Markdown checkboxes are not evidence.
 
+Agent Tools (`forgespec tool run`, `forgespec agent preflight/context`) are controlled capabilities, not a shell escape hatch. See [docs/agent-tools.md](docs/agent-tools.md).
+
 ## Development
+
+Requires Node.js 22+ and the pinned package manager (`pnpm@10.15.0` from `package.json`).
 
 ```bash
 pnpm install
@@ -59,7 +63,7 @@ pnpm build
 node bin/forgespec.js --help
 ```
 
-Requires Node.js 22+.
+Whenever you change dependencies in `package.json`, run `pnpm install` and commit the updated `pnpm-lock.yaml` in the same change. CI installs with `pnpm install --frozen-lockfile` and will fail if the lockfile is out of date.
 
 ## License
 
