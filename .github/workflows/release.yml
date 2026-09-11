@@ -6,10 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Validate only (no publish or GitHub Release)'
+      publish:
+        description: >-
+          false = validation only (no GitHub Package publish, no GitHub Release).
+          true = publish @tiagomoscoso/forgespec to GitHub Packages and create a GitHub Release.
         type: boolean
-        default: true
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,6 +20,11 @@ concurrency:
 permissions:
   contents: write
   packages: write
+
+env:
+  PACKAGE_NAME: '@tiagomoscoso/forgespec'
+  REGISTRY_URL: 'https://npm.pkg.github.com'
+  SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
 
 jobs:
   release:
@@ -81,6 +88,53 @@ jobs:
           echo "version=$PKG" >> "$GITHUB_OUTPUT"
           echo "Release target: $TAG (package.json $PKG)"
 
+      - name: Release plan summary
+        run: |
+          if [ "${{ env.SHOULD_PUBLISH }}" = "true" ]; then
+            MODE="PUBLISH"
+            PUBLISH_LINE="**yes** — will publish to GitHub Packages"
+            RELEASE_LINE="**yes** — will create a GitHub Release"
+          else
+            MODE="DRY RUN"
+            PUBLISH_LINE="**no** — Package will NOT be published"
+            RELEASE_LINE="**no** — GitHub Release will NOT be created"
+          fi
+
+          TRIGGER="${{ github.event_name }}"
+          if [ "$TRIGGER" = "push" ]; then
+            TRIGGER_DETAIL="tag push (${GITHUB_REF_NAME})"
+          else
+            TRIGGER_DETAIL="manual workflow_dispatch (publish=${{ inputs.publish }})"
+          fi
+
+          {
+            echo "## ForgeSpec Release — ${MODE}"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Mode | **${MODE}** |"
+            echo "| Trigger | ${TRIGGER_DETAIL} |"
+            echo "| Package | \`${{ env.PACKAGE_NAME }}\` |"
+            echo "| Version | \`${{ steps.version.outputs.version }}\` |"
+            echo "| Tag | \`${{ steps.version.outputs.tag }}\` |"
+            echo "| Registry | \`${{ env.REGISTRY_URL }}\` |"
+            echo "| GitHub Package publish | ${PUBLISH_LINE} |"
+            echo "| GitHub Release create | ${RELEASE_LINE} |"
+            echo ""
+            if [ "$MODE" = "DRY RUN" ]; then
+              echo "> Validation-only run. Quality gates and packaging run, but **no publish** and **no GitHub Release**."
+              echo "> To publish manually, re-run this workflow with **publish = true**."
+            else
+              echo "> Publish run. Duplicate package versions and existing GitHub Releases fail the workflow."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=== ForgeSpec Release: ${MODE} ==="
+          echo "Package: ${{ env.PACKAGE_NAME }}@${{ steps.version.outputs.version }}"
+          echo "Tag: ${{ steps.version.outputs.tag }}"
+          echo "GitHub Package publish: ${PUBLISH_LINE}"
+          echo "GitHub Release create: ${RELEASE_LINE}"
+
       - name: Pack release artifacts
         run: |
           rm -f ./*.tgz SHA256SUMS
@@ -89,40 +143,55 @@ jobs:
           sha256sum ./*.tgz > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Duplicate version guard
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: '[PUBLISH] Guard — package version not already on GitHub Packages'
+        if: env.SHOULD_PUBLISH == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if npm view "@tiagomoscoso/forgespec@${VERSION}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
-            echo "Package version ${VERSION} already exists on GitHub Packages."
+          if npm view "${{ env.PACKAGE_NAME }}@${VERSION}" version --registry=${{ env.REGISTRY_URL }} >/dev/null 2>&1; then
+            echo "::error::Package ${{ env.PACKAGE_NAME }}@${VERSION} already exists on GitHub Packages."
             exit 1
           fi
-          echo "Package version ${VERSION} is not yet published."
+          echo "Package ${{ env.PACKAGE_NAME }}@${VERSION} is not yet published."
 
-      - name: Existing GitHub Release guard
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: '[PUBLISH] Guard — GitHub Release does not already exist'
+        if: env.SHOULD_PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists."
+            echo "::error::GitHub Release $TAG already exists."
             exit 1
           fi
           echo "GitHub Release $TAG does not exist yet."
 
-      - name: Publish to GitHub Packages
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: '[PUBLISH] Publish to GitHub Packages'
+        if: env.SHOULD_PUBLISH == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm publish --no-git-checks
 
-      - name: GitHub Release
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: '[PUBLISH] Create GitHub Release'
+        if: env.SHOULD_PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           gh release create "$TAG" ./*.tgz SHA256SUMS --generate-notes --title "$TAG"
+
+      - name: Release result summary
+        if: always()
+        run: |
+          if [ "${{ env.SHOULD_PUBLISH }}" = "true" ]; then
+            RESULT="Published ${{ env.PACKAGE_NAME }}@${{ steps.version.outputs.version }} and created GitHub Release ${{ steps.version.outputs.tag }}."
+          else
+            RESULT="Validation-only run completed. Package will NOT be published. GitHub Release will NOT be created."
+          fi
+          {
+            echo ""
+            echo "### Result"
+            echo "${RESULT}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${RESULT}"
