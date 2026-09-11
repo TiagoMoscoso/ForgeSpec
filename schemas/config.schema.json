@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TiagoMoscoso/ForgeSpec/schemas/config.schema.json",
+  "title": "ForgeSpec config.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": { "const": 1 },
+    "project": { "type": "object" },
+    "workflow": { "type": "object" },
+    "git": { "type": "object" }
+  }
+}

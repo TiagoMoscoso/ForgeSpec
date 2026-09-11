@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+*.tgz
+# lockfile is committed for frozen installs
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+.vscode
+.idea
+.eslintcache
+.vitest

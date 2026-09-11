@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TiagoMoscoso/ForgeSpec/schemas/plan.schema.json",
+  "title": "ForgeSpec plan.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "change_id", "tasks"],
+  "properties": {
+    "version": { "const": 1 },
+    "change_id": { "type": "string" },
+    "change_hash": { "type": "string" },
+    "forged_at": { "type": "string" },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "object" }
+    }
+  }
+}
