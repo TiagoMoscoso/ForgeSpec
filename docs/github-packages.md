@@ -66,6 +66,32 @@ npmjs trusted publishing (OIDC `id-token`) is **not** used. GitHub Packages auth
 
 Duplicate versions fail closed: the release job aborts if `@tiagomoscoso/forgespec@version` already exists.
 
+## Release workflow
+
+Publishing is handled by `.github/workflows/release.yml`. Regular pushes and pull requests run CI only.
+
+### Tag-based release (automatic publish)
+
+Bump `package.json`, commit to `main`, then push a matching tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag must match `package.json` exactly (`0.1.0` → `v0.1.0`). Tag pushes always run in **PUBLISH** mode.
+
+### Manual release
+
+In **Actions → Release → Run workflow**:
+
+| `publish` | Behavior |
+| --- | --- |
+| `false` (default) | **DRY RUN** — runs all quality gates and packaging; does **not** publish or create a GitHub Release |
+| `true` | **PUBLISH** — publishes to GitHub Packages and creates a GitHub Release |
+
+Each run writes a **Release plan summary** to the job summary (`$GITHUB_STEP_SUMMARY`) showing mode, package, version, tag, and whether publish/release steps will run.
+
 ## Versioning
 
 SemVer in `package.json`. Push tag `vX.Y.Z` (must match `package.json`) to run `.github/workflows/release.yml`.
