@@ -60,6 +60,7 @@ export interface ValidatorContext {
   filesAtStart: string[];
   filesAtFinish: string[];
   waivers: WaiverRecord[];
+  changeId?: string;
 }
 
 function normalizeName(name: string): string {
@@ -217,6 +218,39 @@ export async function runDeterministicValidator(
     };
   }
 
+  if (ctx.config.tools[name]) {
+    const { runTool } = await import('./tools/run.js');
+    try {
+      const result = await runTool({
+        root: ctx.root,
+        cwd: ctx.cwd,
+        toolId: name,
+        taskId: ctx.task.id,
+        changeId: ctx.changeId,
+        phase: 'exec',
+        confirm: true,
+      });
+      return {
+        name,
+        kind: 'deterministic',
+        status: 'passed',
+        exitCode: result.exitCode,
+        summary: result.summary.slice(0, 1000) || `tool ${name} passed`,
+      };
+    } catch (error) {
+      if (error instanceof ForgeError && error.code === Codes.TOOL_FAILED) {
+        return {
+          name,
+          kind: 'deterministic',
+          status: 'failed',
+          exitCode: (error.details.exitCode as number | undefined) ?? 1,
+          summary: String(error.details.summary ?? error.message).slice(0, 1000),
+        };
+      }
+      throw error;
+    }
+  }
+
   const argv = await resolveArgv(name, ctx);
   if (!argv) {
     throw new ForgeError(
@@ -248,7 +282,8 @@ export async function runValidatorList(
     if (isSemanticValidator(name)) {
       continue;
     }
-    records.push(await runDeterministicValidator(name, ctx));
+    const record = await runDeterministicValidator(name, ctx);
+    records.push(record);
   }
   const failed = records.filter((record) => record.status === 'failed');
   if (failed.length > 0) {

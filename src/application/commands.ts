@@ -1,7 +1,9 @@
 import { hostname } from 'node:os';
 import { parseChangeMarkdown } from '../domain/change/parse.js';
 import { assertSealable } from '../domain/change/seal.js';
-import { fingerprintFiles } from '../domain/evidence/fingerprint.js';
+import { fingerprintTask } from './fingerprint.js';
+import { runWorkflowHooks } from './tools/hooks.js';
+import { toolsForPhase } from './tools/registry.js';
 import {
   isEvidenceFresh,
   type EvidenceRecord,
@@ -19,11 +21,7 @@ import { ForgeError } from '../domain/validation/error.js';
 import { loadResolvedConfig } from '../infrastructure/config/load.js';
 import type { ForgeConfig } from '../infrastructure/config/schema.js';
 import { runArgv } from '../infrastructure/process/spawn.js';
-import {
-  filesMatching,
-  readMatchingFiles,
-  walkRelativeFiles,
-} from '../infrastructure/filesystem/walk.js';
+import { filesMatching, walkRelativeFiles } from '../infrastructure/filesystem/walk.js';
 import { gitIdentity, isGitRepo } from '../infrastructure/git/git.js';
 import {
   addWaiver,
@@ -132,11 +130,6 @@ async function assertWorkspace(loaded: LoadedChange, cwd: string): Promise<void>
       'Run `forgespec workspace setup` or switch to the owning worktree.',
     );
   }
-}
-
-async function fingerprintTask(root: string, task: PlanTask): Promise<string> {
-  const files = await readMatchingFiles(root, task.touches.length > 0 ? task.touches : ['**/*']);
-  return fingerprintFiles(files);
 }
 
 function attemptId(): string {
@@ -343,6 +336,13 @@ export async function execStart(
       }
     }
   }
+  await runWorkflowHooks(loaded.config, loaded.config.workflow.exec.before, {
+    root,
+    cwd,
+    changeId: loaded.changeId,
+    taskId,
+    phase: 'exec',
+  });
   const files = await walkRelativeFiles(root);
   const lock: TaskLock = {
     taskId,
@@ -399,6 +399,7 @@ export async function execFinish(
     filesAtStart,
     filesAtFinish,
     waivers,
+    changeId: loaded.changeId,
   };
   let validatorRecords;
   try {
@@ -423,6 +424,13 @@ export async function execFinish(
       mandatoryRequirementCount: task.requirements.filter((id) =>
         loaded.change!.requirements.some((req) => req.id === id && req.kind === 'mandatory'),
       ).length,
+    });
+    await runWorkflowHooks(loaded.config, loaded.config.workflow.exec.after, {
+      root,
+      cwd,
+      changeId: loaded.changeId,
+      taskId,
+      phase: 'exec',
     });
   } catch (error) {
     await appendEvent(loaded.dir, taskId, {
@@ -593,6 +601,13 @@ export async function archiveTask(
     );
   }
   const evidence = await requireFreshEvidence(loaded, task, root);
+  await runWorkflowHooks(loaded.config, loaded.config.workflow.archive.before, {
+    root,
+    cwd,
+    changeId: loaded.changeId,
+    taskId,
+    phase: 'archive',
+  });
   const waivers = await readWaivers(loaded.dir);
   const filesAtFinish = await walkRelativeFiles(root);
   const archiveValidators =
@@ -632,6 +647,7 @@ export async function archiveTask(
         filesAtStart: evidence.filesAtStart,
         filesAtFinish,
         waivers,
+        changeId: loaded.changeId,
       },
     );
     assertTransition('IMPLEMENTED', 'VERIFIED');
@@ -651,6 +667,13 @@ export async function archiveTask(
       'Task is VERIFIED. Fix the action and re-run archive to finalize.',
     );
   }
+  await runWorkflowHooks(loaded.config, loaded.config.workflow.archive.after, {
+    root,
+    cwd,
+    changeId: loaded.changeId,
+    taskId,
+    phase: 'archive',
+  });
   assertTransition('VERIFIED', 'ARCHIVED');
   await appendEvent(loaded.dir, taskId, {
     type: 'archive',
@@ -828,6 +851,7 @@ export async function taskContext(
     dependencyStates: Object.fromEntries(task.depends_on.map((id) => [id, states[id]])),
     suggestedPaths: task.touches,
     guidance: loaded.config.workflow.explore.guidance,
+    availableTools: toolsForPhase(loaded.config, 'exec').map((tool) => tool.id),
   };
 }
 

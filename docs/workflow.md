@@ -39,3 +39,7 @@ Do not add `proposal.md`, `design.md`, `tasks.md`, or a progress board. `forgesp
 ## Git isolation
 
 `git.isolation` may be `none` (default), `branch-per-change`, or `worktree-per-change`. When enabled, `exec` and `archive` fail if the current branch/worktree is not the one recorded by `forgespec workspace setup`.
+
+## Skills
+
+This document covers CLI-owned state. For how the agent skills that drive each phase reason about architecture, requirements, decomposition, and delivery review — and how specialist checklists (architecture, security, data, migration, …) get selected — see [docs/skills.md](skills.md).

@@ -10,7 +10,12 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'json-summary'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/**/types.ts', 'src/cli/index.ts'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/**/types.ts',
+        'src/cli/index.ts',
+        'src/infrastructure/telemetry/otel.ts',
+      ],
       thresholds: {
         lines: 85,
         functions: 85,

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { Codes } from '../../domain/validation/codes.js';
+import { Codes, type ErrorCode } from '../../domain/validation/codes.js';
 import { ForgeError } from '../../domain/validation/error.js';
 import { redactSecrets } from '../../domain/evidence/fingerprint.js';
 
@@ -9,9 +9,13 @@ export interface SpawnResult {
   stdout: string;
   stderr: string;
   summary: string;
+  timedOut: boolean;
+  overflow: boolean;
+  cancelled: boolean;
 }
 
 const DISALLOWED_SHELL_META = /[;&|`$<>]/;
+export const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
 
 export function assertArgv(argv: unknown, where: string): string[] {
   if (!Array.isArray(argv) || argv.length === 0 || argv.some((item) => typeof item !== 'string')) {
@@ -22,7 +26,7 @@ export function assertArgv(argv: unknown, where: string): string[] {
     );
   }
   const executable = argv[0]!;
-  if (executable.includes(' ') && DISALLOWED_SHELL_META.test(executable)) {
+  if (executable.includes(' ') || DISALLOWED_SHELL_META.test(executable)) {
     throw new ForgeError(
       Codes.COMMAND_SHELL,
       `Refusing executable '${executable}' at ${where}.`,
@@ -32,13 +36,30 @@ export function assertArgv(argv: unknown, where: string): string[] {
   return argv;
 }
 
-export async function runArgv(
-  argv: string[],
-  options: { cwd: string; timeoutMs?: number; env?: NodeJS.ProcessEnv },
-): Promise<SpawnResult> {
+export interface RunArgvOptions {
+  cwd: string;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+  maxOutputBytes?: number;
+  signal?: AbortSignal;
+  timeoutCode?: ErrorCode;
+  overflowCode?: ErrorCode;
+  cancelCode?: ErrorCode;
+}
+
+export async function runArgv(argv: string[], options: RunArgvOptions): Promise<SpawnResult> {
   const safe = assertArgv(argv, 'spawn');
   const [file, ...args] = safe;
+  const maxOutput = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  if (options.signal?.aborted) {
+    throw new ForgeError(
+      options.cancelCode ?? Codes.TOOL_CANCELLED,
+      'Command was cancelled before start.',
+    );
+  }
   return await new Promise((resolve, reject) => {
+    let settled = false;
     const child = spawn(file!, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
@@ -47,42 +68,98 @@ export async function runArgv(
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let overflow = false;
+    let cancelled = false;
+
+    const finish = (fn: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', onAbort);
+      fn();
+    };
+
     const timeout = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGKILL');
-      reject(
-        new ForgeError(
-          Codes.VALIDATOR_FAILED,
-          `Command timed out after ${options.timeoutMs ?? 120_000}ms: ${safe.join(' ')}`,
-          'Increase timeout_ms or fix the hanging command.',
+      finish(() =>
+        reject(
+          new ForgeError(
+            options.timeoutCode ?? Codes.VALIDATOR_FAILED,
+            `Command timed out after ${timeoutMs}ms.`,
+            'Increase timeout_ms or fix the hanging command.',
+          ),
         ),
       );
-    }, options.timeoutMs ?? 120_000);
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
-    });
+    }, timeoutMs);
+
+    const onAbort = (): void => {
+      cancelled = true;
+      child.kill('SIGKILL');
+      finish(() =>
+        reject(
+          new ForgeError(
+            options.cancelCode ?? Codes.TOOL_CANCELLED,
+            'Command was cancelled.',
+            'Retry the tool when ready.',
+          ),
+        ),
+      );
+    };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+
+    const accumulate = (target: 'stdout' | 'stderr', chunk: Buffer): void => {
+      const text = chunk.toString('utf8');
+      if (target === 'stdout') {
+        stdout += text;
+      } else {
+        stderr += text;
+      }
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maxOutput) {
+        overflow = true;
+        child.kill('SIGKILL');
+        finish(() =>
+          reject(
+            new ForgeError(
+              options.overflowCode ?? Codes.TOOL_OVERFLOW,
+              `Command output exceeded ${maxOutput} bytes.`,
+              'Reduce tool output or raise the configured output limit.',
+            ),
+          ),
+        );
+      }
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => accumulate('stdout', chunk));
+    child.stderr.on('data', (chunk: Buffer) => accumulate('stderr', chunk));
     child.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(
-        new ForgeError(
-          Codes.VALIDATOR_FAILED,
-          `Failed to spawn ${file}: ${error.message}`,
-          'Ensure the executable exists and is on PATH.',
+      finish(() =>
+        reject(
+          new ForgeError(
+            Codes.VALIDATOR_FAILED,
+            `Failed to spawn ${file}: ${error.message}`,
+            'Ensure the executable exists and is on PATH.',
+          ),
         ),
       );
     });
     child.on('close', (code) => {
-      clearTimeout(timeout);
-      const exitCode = code ?? 1;
-      const summary = redactSecrets((stdout + stderr).slice(0, 4000));
-      resolve({
-        argv: safe,
-        exitCode,
-        stdout: redactSecrets(stdout),
-        stderr: redactSecrets(stderr),
-        summary,
+      finish(() => {
+        const exitCode = code ?? 1;
+        const summary = redactSecrets((stdout + stderr).slice(0, 4000));
+        resolve({
+          argv: safe,
+          exitCode,
+          stdout: redactSecrets(stdout),
+          stderr: redactSecrets(stderr),
+          summary,
+          timedOut,
+          overflow,
+          cancelled,
+        });
       });
     });
   });

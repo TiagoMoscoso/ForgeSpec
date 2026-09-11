@@ -41,7 +41,7 @@ Want an agent to drive setup? Paste [docs/install.md](docs/install.md).
 explore (optional) → propose → forge → exec <one task> → archive <task> → close
 ```
 
-Agent skills (`/forge-explore`, `/forge:propose`, `$forgespec-exec`, …) orchestrate. The CLI owns every state transition, validator run, evidence record, and archive/close.
+Agent skills (`/forge-explore`, `/forge:propose`, `$forgespec-exec`, …) carry the reasoning — architecture tradeoffs, requirement quality, task decomposition, delivery review — and select specialist checklists (architecture, security, data, migration, …) as each change actually calls for. The CLI owns every state transition, validator run, evidence record, and archive/close. See [docs/skills.md](docs/skills.md).
 
 Canonical artifacts per change:
 
